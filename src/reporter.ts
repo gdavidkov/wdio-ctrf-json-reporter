@@ -213,8 +213,6 @@ export default class GenerateCtrfReport extends WDIOReporter {
     return result
   }
 
-  private previousReport?: WdioCTRFReport
-
   onSuiteStart(suite: SuiteStats): void {
     this.currentSuite = suite.fullTitle
     this.currentSpecFile = suite.file
@@ -239,20 +237,6 @@ export default class GenerateCtrfReport extends WDIOReporter {
       buildNumber: this.reporterConfigOptions.buildNumber,
       buildUrl: this.reporterConfigOptions.buildUrl,
       extra: caps as Record<string, unknown>,
-    }
-
-    const oldCtfFilePath = path.join(
-      this.outputDir,
-      this.getReportFileName(runner.specs[0])
-    )
-    if (fs.existsSync(oldCtfFilePath)) {
-      try {
-        this.previousReport = JSON.parse(
-          fs.readFileSync(oldCtfFilePath, 'utf8')
-        ) as WdioCTRFReport
-      } catch (e) {
-        console.error(`CTRF: Error reading previous report ${String(e)}`)
-      }
     }
   }
 
@@ -303,7 +287,7 @@ export default class GenerateCtrfReport extends WDIOReporter {
       .replace(/[\x00-\x1F]/g, '_')
       .trim()
       .replace(/[. ]+$/, '')
-    return `ctrf-${uniqueIdentifier}.json`
+    return `ctrf-${uniqueIdentifier}-${this.ctrfReport.reportId ?? crypto.randomUUID()}.json`
   }
 
   onRunnerEnd(runner: RunnerStats): void {
@@ -350,33 +334,14 @@ export default class GenerateCtrfReport extends WDIOReporter {
     }
 
     if (this.reporterConfigOptions.minimal === false) {
-      const previousTest = this.previousReport?.results.tests.find(
-        (name) => name.name === test.title
-      )
       ctrfTest.start = Math.floor(test.start.getTime() / 1000)
       ctrfTest.stop = test.end ? Math.floor(test.end.getTime() / 1000) : 0
       ctrfTest.message = this.extractFailureDetails(test).message
       ctrfTest.trace = this.extractFailureDetails(test).trace
       ctrfTest.rawStatus = test.state
       ctrfTest.type = this.reporterConfigOptions.testType ?? 'e2e'
-
-      if (previousTest) {
-        if (previousTest.status === 'failed') {
-          ctrfTest.retries = (previousTest.retries ?? 0) + 1
-        }
-      } else {
-        ctrfTest.retries = test.retries ?? 0
-      }
-
-      if (previousTest) {
-        if (previousTest.status === 'failed') {
-          ctrfTest.flaky = test.state === 'passed'
-        } else {
-          ctrfTest.flaky = false
-        }
-      } else {
-        ctrfTest.flaky = test.state === 'passed' && (test.retries ?? 0) > 0
-      }
+      ctrfTest.retries = test.retries ?? 0
+      ctrfTest.flaky = test.state === 'passed' && (test.retries ?? 0) > 0
       ctrfTest.suite = this.currentSuite
       ctrfTest.filePath = this.currentSpecFile
       ctrfTest.browser = this.currentBrowser

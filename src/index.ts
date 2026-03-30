@@ -5,3 +5,4 @@ export {
   type CtrfRuntimeMessage,
 } from './reporter'
 export { ctrf, extra } from './runtime'
+export { mergeResults } from './mergeResults'
