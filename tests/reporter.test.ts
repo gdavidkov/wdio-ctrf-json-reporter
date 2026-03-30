@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { getRunnerForSuite, SUITES } from './testdata'
-import GenerateCtrfReport from '../src'
+import GenerateCtrfReport, { mergeResults } from '../src'
 import * as fs from 'fs'
 import { type CtrfReporterConfigOptions } from '../src/reporter'
 
@@ -296,17 +296,22 @@ describe('Reporter output', () => {
     })
   })
 
-  describe('! Spec Retry for 1 Failed test', () => {
+  describe('! Test-level retries (WDIO native)', () => {
+    const testRetryDir = 'ctrf-test-level-retry'
     const suite = { ...SUITES.suite_1passed_1failed }
-    suite.file = `${suite.file}.retrySpec`
+    suite.file = 'test-level-retries.e2e.js'
     const test0 = suite.tests[0]
     const test1 = suite.tests[1]
 
     beforeEach(() => {
-      tmpReporter = new GenerateCtrfReport(mockOptions)
+      fs.rmSync(testRetryDir, { recursive: true, force: true })
+      tmpReporter = new GenerateCtrfReport({
+        ...mockOptions,
+        outputDir: testRetryDir,
+      })
     })
 
-    test('first run - 1 passed, 1 failure, 0 flaky', () => {
+    test('failed test with no retries', () => {
       tmpReporter.onRunnerStart(getRunnerForSuite(suite))
       tmpReporter.onSuiteStart(suite as any)
       tmpReporter.onTestStart(test0 as any)
@@ -318,165 +323,158 @@ describe('Reporter output', () => {
 
       expect(tmpReporter.ctrfReport.results.summary).toMatchObject({
         failed: 1,
-        other: 0,
         passed: 1,
-        pending: 0,
-        skipped: 0,
-        start: expect.any(Number),
-        stop: expect.any(Number),
         tests: 2,
       })
 
-      expect(tmpReporter.ctrfReport.results.tests).toMatchObject([
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: false,
-          message: undefined,
-          name: suite.tests[0].title,
-          rawStatus: 'passed',
-          retries: 0,
-          start: 1753042662,
-          status: 'passed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: undefined,
-          type: 'e2e',
-        },
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: false,
-          message: suite.tests[1].error?.message,
-          name: suite.tests[1].title,
-          rawStatus: 'failed',
-          retries: 0,
-          start: 1753042662,
-          status: 'failed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: suite.tests[1].error?.stack,
-          type: 'e2e',
-        },
-      ])
+      expect(tmpReporter.ctrfReport.results.tests[1]).toMatchObject({
+        name: test1.title,
+        status: 'failed',
+        retries: 0,
+        flaky: false,
+      })
     })
 
-    test('second run - 1 passed, 1 failure, 0 flaky', () => {
+    test('failed test after retries - retries from WDIO stats', () => {
+      const test1WithRetries = { ...test1, retries: 2 }
+
       tmpReporter.onRunnerStart(getRunnerForSuite(suite))
       tmpReporter.onSuiteStart(suite as any)
       tmpReporter.onTestStart(test0 as any)
       tmpReporter.onTestEnd(test0 as any)
-      tmpReporter.onTestStart(test1 as any)
-      tmpReporter.onTestEnd(test1 as any)
+      tmpReporter.onTestStart(test1WithRetries as any)
+      tmpReporter.onTestEnd(test1WithRetries as any)
       tmpReporter.onSuiteEnd(suite as any)
       tmpReporter.onRunnerEnd(getRunnerForSuite(suite))
 
       expect(tmpReporter.ctrfReport.results.summary).toMatchObject({
         failed: 1,
-        other: 0,
         passed: 1,
-        pending: 0,
-        skipped: 0,
-        start: expect.any(Number),
-        stop: expect.any(Number),
         tests: 2,
       })
 
-      expect(tmpReporter.ctrfReport.results.tests).toMatchObject([
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: false,
-          message: undefined,
-          name: suite.tests[0].title,
-          rawStatus: 'passed',
-          start: 1753042662,
-          status: 'passed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: undefined,
-          type: 'e2e',
-        },
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: false,
-          message: suite.tests[1].error?.message,
-          name: suite.tests[1].title,
-          rawStatus: 'failed',
-          retries: 1,
-          start: 1753042662,
-          status: 'failed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: suite.tests[1].error?.stack,
-          type: 'e2e',
-        },
-      ])
+      expect(tmpReporter.ctrfReport.results.tests[1]).toMatchObject({
+        name: test1.title,
+        status: 'failed',
+        retries: 2,
+        flaky: false,
+      })
     })
 
-    test('third run - 2 passed, 0 failures, 1 flaky', () => {
-      const test1fixed = { ...test1 }
-      test1fixed.error = undefined
-      test1fixed.state = 'passed'
+    test('passed test after retries - marked as flaky', () => {
+      const test1Passed = {
+        ...test1,
+        state: 'passed',
+        error: undefined,
+        retries: 1,
+      }
 
       tmpReporter.onRunnerStart(getRunnerForSuite(suite))
       tmpReporter.onSuiteStart(suite as any)
       tmpReporter.onTestStart(test0 as any)
       tmpReporter.onTestEnd(test0 as any)
-      tmpReporter.onTestStart(test1fixed as any)
-      tmpReporter.onTestEnd(test1fixed as any)
+      tmpReporter.onTestStart(test1Passed as any)
+      tmpReporter.onTestEnd(test1Passed as any)
       tmpReporter.onSuiteEnd(suite as any)
       tmpReporter.onRunnerEnd(getRunnerForSuite(suite))
 
       expect(tmpReporter.ctrfReport.results.summary).toMatchObject({
         failed: 0,
-        other: 0,
         passed: 2,
-        pending: 0,
-        skipped: 0,
-        start: expect.any(Number),
-        stop: expect.any(Number),
         tests: 2,
       })
 
-      expect(tmpReporter.ctrfReport.results.tests).toMatchObject([
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: false,
-          message: undefined,
-          name: suite.tests[0].title,
-          rawStatus: 'passed',
-          start: 1753042662,
-          status: 'passed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: undefined,
-          type: 'e2e',
-        },
-        {
-          browser: 'chrome',
-          duration: undefined,
-          filePath: suite.file,
-          flaky: true,
-          message: undefined,
-          name: suite.tests[1].title,
-          rawStatus: 'passed',
-          retries: 2,
-          start: 1753042662,
-          status: 'passed',
-          stop: 0,
-          suite: suite.fullTitle,
-          trace: undefined,
-          type: 'e2e',
-        },
-      ])
+      expect(tmpReporter.ctrfReport.results.tests[1]).toMatchObject({
+        name: test1.title,
+        status: 'passed',
+        retries: 1,
+        flaky: true,
+      })
+    })
+  })
+
+  describe('! Spec file retries (specFileRetries) via merge', () => {
+    const specRetryDir = 'ctrf-spec-retry-test'
+    const suite = { ...SUITES.suite_1passed_1failed }
+    suite.file = 'spec-retry.e2e.js'
+    const test0 = suite.tests[0]
+    const test1 = suite.tests[1]
+
+    beforeAll(() => {
+      fs.rmSync(specRetryDir, { recursive: true, force: true })
+    })
+
+    let runIndex = 0
+    function runSuite(tests: { test0: any; test1: any }) {
+      const reporter = new GenerateCtrfReport({
+        ...mockOptions,
+        outputDir: specRetryDir,
+      })
+      reporter.onRunnerStart(getRunnerForSuite(suite))
+      // Set a distinct start time so merge can order runs chronologically
+      reporter.ctrfReport.results.summary.start = 1000 + runIndex++
+      reporter.onSuiteStart(suite as any)
+      reporter.onTestStart(tests.test0 as any)
+      reporter.onTestEnd(tests.test0 as any)
+      reporter.onTestStart(tests.test1 as any)
+      reporter.onTestEnd(tests.test1 as any)
+      reporter.onSuiteEnd(suite as any)
+      reporter.onRunnerEnd(getRunnerForSuite(suite))
+    }
+
+    test('writes unique files per retry and merge computes retries/flaky', async () => {
+      // Run 1: test1 fails
+      runSuite({ test0, test1 })
+
+      // Run 2: test1 fails again (spec retry)
+      runSuite({ test0, test1 })
+
+      // Run 3: test1 passes (spec retry)
+      const test1Fixed = { ...test1, state: 'passed', error: undefined }
+      runSuite({ test0, test1: test1Fixed })
+
+      // Verify 3 separate files were written (not overwritten)
+      const files = fs.readdirSync(specRetryDir).filter((f) => f.endsWith('.json'))
+      expect(files.length).toBe(3)
+
+      // Merge and verify retries/flaky computed correctly
+      const merged = await mergeResults(specRetryDir)
+      expect(merged).toBeDefined()
+
+      // Should have 2 unique tests (test0 and test1), not 6
+      expect(merged!.results.tests).toHaveLength(2)
+
+      const mergedTest0 = merged!.results.tests.find(
+        (t) => t.name === test0.title
+      )
+      const mergedTest1 = merged!.results.tests.find(
+        (t) => t.name === test1.title
+      )
+
+      // test0 passed all 3 times - retries=2 (3 runs - 1), not flaky
+      expect(mergedTest0).toMatchObject({
+        name: test0.title,
+        status: 'passed',
+        retries: 2,
+        flaky: false,
+      })
+
+      // test1 failed twice then passed - retries=2, flaky=true
+      expect(mergedTest1).toMatchObject({
+        name: test1.title,
+        status: 'passed',
+        retries: 2,
+        flaky: true,
+      })
+
+      expect(merged!.results.summary).toMatchObject({
+        tests: 2,
+        passed: 2,
+        failed: 0,
+      })
+
+      // Cleanup
+      fs.rmSync(specRetryDir, { recursive: true, force: true })
     })
   })
 })
